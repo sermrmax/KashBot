@@ -6,15 +6,23 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 
 from database import init_db, add_expense, get_today_expenses
+
 
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 dp = Dispatcher()
+
+
+class AddExpense(StatesGroup):
+    waiting_for_amount = State()
+    waiting_for_category = State()
 
 
 class TrustedEnvSession(AiohttpSession):
@@ -45,11 +53,82 @@ async def start_handler(message: Message):
 
 
 @dp.message(Command("add"))
-async def add_handler(message: Message):
+async def add_handler(message: Message, state: FSMContext):
+    await state.set_state(AddExpense.waiting_for_amount)
+
     await message.answer(
-        "Отправь расход в формате:\n\n"
-        "500 Еда"
+        "💰 Сколько потратил?\n\n"
+        "Например: 500"
     )
+
+
+@dp.message(AddExpense.waiting_for_amount)
+async def process_amount(message: Message, state: FSMContext):
+    amount_text = message.text
+
+    if not amount_text:
+        await message.answer(
+            "❌ Отправь сумму текстом.\n"
+            "Например: 500"
+        )
+        return
+
+    try:
+        amount = float(amount_text.replace(",", "."))
+    except ValueError:
+        await message.answer(
+            "❌ Некорректная сумма.\n"
+            "Например: 500"
+        )
+        return
+
+    if amount <= 0:
+        await message.answer(
+            "❌ Сумма должна быть больше нуля."
+        )
+        return
+
+    await state.update_data(amount=amount)
+
+    await state.set_state(
+        AddExpense.waiting_for_category
+    )
+
+    await message.answer(
+        "🏷️ Введите категорию расхода\n\n"
+        "Например: Еда, Транспорт, Развлечения"
+    )
+
+
+@dp.message(AddExpense.waiting_for_category)
+async def process_category(message: Message, state: FSMContext):
+    category = message.text
+
+    if not category:
+        await message.answer(
+            "❌ Отправь категорию текстом.\n"
+            "Например: Еда"
+        )
+        return
+
+    category = category.strip()
+
+    data = await state.get_data()
+    amount = data["amount"]
+
+    add_expense(
+        user_id=message.from_user.id,
+        amount=amount,
+        category=category
+    )
+
+    await message.answer(
+        "✅ Расход добавлен!\n\n"
+        f"💰 Сумма: {amount:.2f} ₽\n"
+        f"🏷️ Категория: {category}"
+    )
+
+    await state.clear()
 
 
 @dp.message(Command("today"))
@@ -72,40 +151,6 @@ async def today_handler(message: Message):
     text += f"\nИтого: {total:.2f} ₽"
 
     await message.answer(text)
-
-
-@dp.message()
-async def expense_handler(message: Message):
-    text = message.text
-
-    if not text:
-        return
-
-    parts = text.split(maxsplit=1)
-
-    if len(parts) != 2:
-        return
-
-    amount_text, category = parts
-
-    try:
-        amount = float(
-            amount_text.replace(",", ".")
-        )
-    except ValueError:
-        return
-
-    add_expense(
-        user_id=message.from_user.id,
-        amount=amount,
-        category=category
-    )
-
-    await message.answer(
-        f"✅ Расход сохранён\n\n"
-        f"Сумма: {amount:.2f} ₽\n"
-        f"Категория: {category}"
-    )
 
 
 async def main():
