@@ -11,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 
 from database import init_db, add_expense, get_today_expenses
+from categories import normalize_category
 
 
 load_dotenv()
@@ -111,7 +112,7 @@ async def process_category(message: Message, state: FSMContext):
         )
         return
 
-    category = category.strip()
+    category = normalize_category(category)
 
     data = await state.get_data()
     amount = data["amount"]
@@ -143,9 +144,17 @@ async def today_handler(message: Message):
 
     total = sum(expense[0] for expense in expenses)
 
-    text = "Расходы за сегодня:\n\n"
+    categories_total = {}
 
     for amount, category, created_at in expenses:
+        if category in categories_total:
+            categories_total[category] += amount
+        else:
+            categories_total[category] = amount
+
+    text = "Расходы за сегодня:\n\n"
+
+    for category, amount in categories_total.items():
         text += f"{category}: {amount:.2f} ₽\n"
 
     text += f"\nИтого: {total:.2f} ₽"
