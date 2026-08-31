@@ -13,5 +13,3 @@ __pycache__/
 .idea/
 
 expenses.db
-
-categories.py
