@@ -135,3 +135,45 @@ def delete_expense(expense_id: int, user_id: int):
 
     conn.commit()
     conn.close()
+
+def update_expense_amount(expense_id: int, user_id: int, new_amount: float):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE expenses
+        SET amount = ?
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            new_amount,
+            expense_id,
+            user_id,
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+def update_expense_category(expense_id: int, user_id: int, new_category: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE expenses
+        SET category = ?
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            new_category,
+            expense_id,
+            user_id,
+        )
+    )
+
+    conn.commit()
+    conn.close()
