@@ -9,6 +9,9 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardRemove,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery,
 )
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.fsm.context import FSMContext
@@ -20,6 +23,8 @@ from database import (
     add_expense,
     get_today_expenses,
     get_month_expenses,
+    get_recent_expenses,
+    delete_expense,
 )
 
 from categories import normalize_category
@@ -42,6 +47,7 @@ main_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="📅 Месяц"),
+            KeyboardButton(text="🗑 Удалить расход"),
         ],
     ],
     resize_keyboard=True,
@@ -96,6 +102,61 @@ async def add_handler(message: Message, state: FSMContext):
     await message.answer(
         "💰 Сколько потратил?\n\n"
         "Например: 500"
+    )
+
+@dp.message(lambda message: message.text == "🗑 Удалить расход")
+async def delete_expense_menu(message: Message):
+    expenses = get_recent_expenses(
+        user_id=message.from_user.id,
+        limit=10,
+    )
+
+    if not expenses:
+        await message.answer(
+            "Удалять пока нечего.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    buttons = []
+
+    for expense_id, amount, category, created_at in expenses:
+        button = InlineKeyboardButton(
+            text=f"{category} — {amount:.2f} ₽",
+            callback_data=f"delete:{expense_id}",
+        )
+
+        buttons.append([button])
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=buttons
+    )
+
+    await message.answer(
+        "🗑 Выбери расход, который хочешь удалить:",
+        reply_markup=keyboard,
+    )
+
+@dp.callback_query(
+    lambda callback: callback.data
+    and callback.data.startswith("delete:")
+)
+async def delete_expense_callback(callback: CallbackQuery):
+    expense_id = int(
+        callback.data.split(":")[1]
+    )
+
+    delete_expense(
+        expense_id=expense_id,
+        user_id=callback.from_user.id,
+    )
+
+    await callback.answer(
+        "Расход удалён ✅"
+    )
+
+    await callback.message.edit_text(
+        "✅ Расход удалён."
     )
 
 @dp.message(lambda message: message.text == "➕ Добавить расход")
