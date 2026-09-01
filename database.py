@@ -70,3 +70,29 @@ def get_today_expenses(user_id: int):
     conn.close()
 
     return expenses
+
+def get_month_expenses(user_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    current_month = datetime.now().strftime("%Y-%m")
+
+    cursor.execute(
+        """
+        SELECT amount, category, created_at
+        FROM expenses
+        WHERE user_id = ?
+        AND strftime('%Y-%m', created_at) = ?
+        ORDER BY created_at DESC
+        """,
+        (
+            user_id,
+            current_month
+        )
+    )
+
+    expenses = cursor.fetchall()
+
+    conn.close()
+
+    return expenses

@@ -19,10 +19,10 @@ from database import (
     init_db,
     add_expense,
     get_today_expenses,
+    get_month_expenses,
 )
 
 from categories import normalize_category
-
 
 load_dotenv()
 
@@ -30,22 +30,22 @@ TOKEN = os.getenv("BOT_TOKEN")
 
 dp = Dispatcher()
 
-
 class AddExpense(StatesGroup):
     waiting_for_amount = State()
     waiting_for_category = State()
-
 
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="➕ Добавить расход"),
             KeyboardButton(text="📊 Сегодня"),
-        ]
+        ],
+        [
+            KeyboardButton(text="📅 Месяц"),
+        ],
     ],
     resize_keyboard=True,
 )
-
 
 category_keyboard = ReplyKeyboardMarkup(
     keyboard=[
@@ -66,7 +66,6 @@ category_keyboard = ReplyKeyboardMarkup(
     one_time_keyboard=True,
 )
 
-
 class TrustedEnvSession(AiohttpSession):
     async def create_session(self):
         if self._should_reset_connector:
@@ -82,7 +81,6 @@ class TrustedEnvSession(AiohttpSession):
 
         return self._session
 
-
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     await message.answer(
@@ -90,7 +88,6 @@ async def start_handler(message: Message):
         "Я KashBot — бот для учёта расходов.",
         reply_markup=main_keyboard,
     )
-
 
 @dp.message(Command("add"))
 async def add_handler(message: Message, state: FSMContext):
@@ -100,7 +97,6 @@ async def add_handler(message: Message, state: FSMContext):
         "💰 Сколько потратил?\n\n"
         "Например: 500"
     )
-
 
 @dp.message(lambda message: message.text == "➕ Добавить расход")
 async def add_button_handler(
@@ -116,7 +112,6 @@ async def add_button_handler(
         "Например: 500",
         reply_markup=ReplyKeyboardRemove(),
     )
-
 
 @dp.message(AddExpense.waiting_for_amount)
 async def process_amount(
@@ -159,7 +154,6 @@ async def process_amount(
         "🏷️ Выбери категорию или напиши свою:",
         reply_markup=category_keyboard,
     )
-
 
 @dp.message(AddExpense.waiting_for_category)
 async def process_category(
@@ -211,7 +205,6 @@ async def process_category(
         reply_markup=main_keyboard,
     )
 
-
 async def show_today_expenses(
     message: Message
 ):
@@ -257,6 +250,37 @@ async def show_today_expenses(
         reply_markup=main_keyboard,
     )
 
+async def show_month_expenses(message: Message):
+    expenses = get_month_expenses(message.from_user.id)
+
+    if not expenses:
+        await message.answer(
+            "В этом месяце расходов пока нет.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    total = sum(expense[0] for expense in expenses)
+
+    categories_total = {}
+
+    for amount, category, created_at in expenses:
+        if category in categories_total:
+            categories_total[category] += amount
+        else:
+            categories_total[category] = amount
+
+    text = "📅 Расходы за текущий месяц:\n\n"
+
+    for category, amount in categories_total.items():
+        text += f"{category}: {amount:.2f} ₽\n"
+
+    text += f"\n💰 Итого: {total:.2f} ₽"
+
+    await message.answer(
+        text,
+        reply_markup=main_keyboard,
+    )
 
 @dp.message(Command("today"))
 async def today_handler(
@@ -266,6 +290,13 @@ async def today_handler(
         message
     )
 
+@dp.message(Command("month"))
+async def month_handler(message: Message):
+    await show_month_expenses(message)
+
+@dp.message(lambda message: message.text == "📅 Месяц")
+async def month_button_handler(message: Message):
+    await show_month_expenses(message)
 
 @dp.message(lambda message: message.text == "📊 Сегодня")
 async def today_button_handler(
@@ -274,7 +305,6 @@ async def today_button_handler(
     await show_today_expenses(
         message
     )
-
 
 async def main():
     if not TOKEN:
@@ -297,7 +327,6 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
