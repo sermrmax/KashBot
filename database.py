@@ -27,7 +27,7 @@ def init_db():
         """
     )
 
-    # Лимиты по категориям
+    # Лимиты
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS category_limits (
@@ -36,6 +36,21 @@ def init_db():
             category TEXT NOT NULL,
             amount REAL NOT NULL,
             UNIQUE(user_id, category)
+        )
+        """
+    )
+
+    # Регулярные расходы
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS recurring_expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            amount REAL NOT NULL,
+            category TEXT NOT NULL,
+            day_of_month INTEGER NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1
         )
         """
     )
@@ -79,68 +94,7 @@ def add_expense(
 
 
 # =========================================================
-# РАСХОДЫ ЗА СЕГОДНЯ
-# =========================================================
-
-def get_today_expenses(user_id: int):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    today = datetime.now().date().isoformat()
-
-    cursor.execute(
-        """
-        SELECT amount, category, created_at
-        FROM expenses
-        WHERE user_id = ?
-        AND DATE(created_at) = ?
-        """,
-        (
-            user_id,
-            today,
-        )
-    )
-
-    expenses = cursor.fetchall()
-
-    conn.close()
-
-    return expenses
-
-
-# =========================================================
-# РАСХОДЫ ЗА ТЕКУЩИЙ МЕСЯЦ
-# =========================================================
-
-def get_month_expenses(user_id: int):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    current_month = datetime.now().strftime("%Y-%m")
-
-    cursor.execute(
-        """
-        SELECT amount, category, created_at
-        FROM expenses
-        WHERE user_id = ?
-        AND strftime('%Y-%m', created_at) = ?
-        ORDER BY created_at DESC
-        """,
-        (
-            user_id,
-            current_month,
-        )
-    )
-
-    expenses = cursor.fetchall()
-
-    conn.close()
-
-    return expenses
-
-
-# =========================================================
-# РАСХОДЫ ЗА ВЫБРАННЫЙ ПЕРИОД
+# РАСХОДЫ ЗА ПЕРИОД
 # =========================================================
 
 def get_expenses_by_period(
@@ -233,7 +187,7 @@ def delete_expense(
 
 
 # =========================================================
-# ИЗМЕНЕНИЕ СУММЫ
+# ИЗМЕНЕНИЕ СУММЫ РАСХОДА
 # =========================================================
 
 def update_expense_amount(
@@ -263,7 +217,7 @@ def update_expense_amount(
 
 
 # =========================================================
-# ИЗМЕНЕНИЕ КАТЕГОРИИ
+# ИЗМЕНЕНИЕ КАТЕГОРИИ РАСХОДА
 # =========================================================
 
 def update_expense_category(
@@ -293,7 +247,7 @@ def update_expense_category(
 
 
 # =========================================================
-# УСТАНОВИТЬ / ИЗМЕНИТЬ ЛИМИТ
+# ЛИМИТЫ
 # =========================================================
 
 def set_category_limit(
@@ -327,10 +281,6 @@ def set_category_limit(
     conn.close()
 
 
-# =========================================================
-# ПОЛУЧИТЬ ВСЕ ЛИМИТЫ
-# =========================================================
-
 def get_category_limits(user_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -353,10 +303,6 @@ def get_category_limits(user_id: int):
 
     return limits
 
-
-# =========================================================
-# ПОЛУЧИТЬ ЛИМИТ КОНКРЕТНОЙ КАТЕГОРИИ
-# =========================================================
 
 def get_category_limit(
     user_id: int,
@@ -388,10 +334,6 @@ def get_category_limit(
     return None
 
 
-# =========================================================
-# УДАЛИТЬ ЛИМИТ
-# =========================================================
-
 def delete_category_limit(
     user_id: int,
     limit_id: int,
@@ -407,6 +349,129 @@ def delete_category_limit(
         """,
         (
             limit_id,
+            user_id,
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# РЕГУЛЯРНЫЕ РАСХОДЫ
+# =========================================================
+
+def add_recurring_expense(
+    user_id: int,
+    name: str,
+    amount: float,
+    category: str,
+    day_of_month: int,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO recurring_expenses (
+            user_id,
+            name,
+            amount,
+            category,
+            day_of_month
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            name,
+            amount,
+            category,
+            day_of_month,
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_recurring_expenses(user_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            name,
+            amount,
+            category,
+            day_of_month
+        FROM recurring_expenses
+        WHERE user_id = ?
+        AND is_active = 1
+        ORDER BY day_of_month, name
+        """,
+        (
+            user_id,
+        )
+    )
+
+    expenses = cursor.fetchall()
+
+    conn.close()
+
+    return expenses
+
+
+def get_recurring_expense(
+    recurring_id: int,
+    user_id: int,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            name,
+            amount,
+            category,
+            day_of_month
+        FROM recurring_expenses
+        WHERE id = ?
+        AND user_id = ?
+        AND is_active = 1
+        """,
+        (
+            recurring_id,
+            user_id,
+        )
+    )
+
+    expense = cursor.fetchone()
+
+    conn.close()
+
+    return expense
+
+
+def delete_recurring_expense(
+    recurring_id: int,
+    user_id: int,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM recurring_expenses
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            recurring_id,
             user_id,
         )
     )
