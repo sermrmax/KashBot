@@ -2,6 +2,8 @@ import asyncio
 import os
 import aiohttp
 
+from datetime import datetime, timedelta
+
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
@@ -16,21 +18,25 @@ from aiogram.types import (
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+
 from dotenv import load_dotenv
 
 from database import (
     init_db,
     add_expense,
-    get_today_expenses,
-    get_month_expenses,
     get_recent_expenses,
     delete_expense,
     update_expense_amount,
     update_expense_category,
+    get_expenses_by_period,
 )
 
 from categories import normalize_category
 
+
+# =========================================================
+# НАСТРОЙКИ
+# =========================================================
 
 load_dotenv()
 
@@ -59,13 +65,10 @@ main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
             KeyboardButton(text="➕ Добавить расход"),
-            KeyboardButton(text="📊 Сегодня"),
+            KeyboardButton(text="📆 Период"),
         ],
         [
-            KeyboardButton(text="📅 Месяц"),
             KeyboardButton(text="🗑 Удалить расход"),
-        ],
-        [
             KeyboardButton(text="✏️ Редактировать расход"),
         ],
     ],
@@ -120,14 +123,15 @@ class TrustedEnvSession(AiohttpSession):
 
 
 # =========================================================
-# START
+# /START
 # =========================================================
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     await message.answer(
         "Привет 👋\n\n"
-        "Я KashBot — бот для учёта расходов.",
+        "Я KashBot — бот для учёта расходов.\n\n"
+        "Выбирай действие ниже 👇",
         reply_markup=main_keyboard,
     )
 
@@ -139,7 +143,7 @@ async def start_handler(message: Message):
 @dp.message(Command("add"))
 async def add_handler(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
     await state.set_state(
         AddExpense.waiting_for_amount
@@ -158,7 +162,7 @@ async def add_handler(
 )
 async def add_button_handler(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
     await state.set_state(
         AddExpense.waiting_for_amount
@@ -178,7 +182,7 @@ async def add_button_handler(
 @dp.message(AddExpense.waiting_for_amount)
 async def process_amount(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
     amount_text = message.text
 
@@ -228,7 +232,7 @@ async def process_amount(
 @dp.message(AddExpense.waiting_for_category)
 async def process_category(
     message: Message,
-    state: FSMContext
+    state: FSMContext,
 ):
     category = message.text
 
@@ -278,6 +282,189 @@ async def process_category(
 
 
 # =========================================================
+# ВЫБОР ПЕРИОДА
+# =========================================================
+
+@dp.message(
+    lambda message:
+    message.text == "📆 Период"
+)
+async def period_menu(
+    message: Message
+):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Сегодня",
+                    callback_data="period:today",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Последние 7 дней",
+                    callback_data="period:week",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Этот месяц",
+                    callback_data="period:month",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Свой период",
+                    callback_data="period:custom",
+                ),
+            ],
+        ]
+    )
+
+    await message.answer(
+        "📆 Выбери период:",
+        reply_markup=keyboard,
+    )
+
+
+# =========================================================
+# ВЫВОД РАСХОДОВ ЗА ПЕРИОД
+# =========================================================
+
+async def show_period_expenses(
+    message: Message,
+    user_id: int,
+    start_date: str,
+    end_date: str,
+    title: str,
+):
+    expenses = get_expenses_by_period(
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if not expenses:
+        await message.answer(
+            f"{title}\n\n"
+            "Расходов за этот период нет.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    total = sum(
+        expense[0]
+        for expense in expenses
+    )
+
+    categories_total = {}
+
+    for amount, category, created_at in expenses:
+
+        if category in categories_total:
+            categories_total[category] += amount
+
+        else:
+            categories_total[category] = amount
+
+    text = f"{title}\n\n"
+
+    for category, amount in categories_total.items():
+
+        text += (
+            f"{category}: "
+            f"{amount:.2f} ₽\n"
+        )
+
+    text += (
+        f"\n💰 Итого: "
+        f"{total:.2f} ₽"
+    )
+
+    await message.answer(
+        text,
+        reply_markup=main_keyboard,
+    )
+
+
+# =========================================================
+# ОБРАБОТКА ВЫБРАННОГО ПЕРИОДА
+# =========================================================
+
+@dp.callback_query(
+    lambda callback:
+    callback.data
+    and callback.data.startswith("period:")
+)
+async def period_callback(
+    callback: CallbackQuery
+):
+    period = callback.data.split(":")[1]
+
+    today = datetime.now().date()
+
+    if period == "today":
+
+        start_date = today
+        end_date = today
+
+        title = "📊 Расходы за сегодня"
+
+    elif period == "week":
+
+        start_date = (
+            today - timedelta(days=6)
+        )
+
+        end_date = today
+
+        title = (
+            "📆 Расходы за последние 7 дней"
+        )
+
+    elif period == "month":
+
+        start_date = today.replace(
+            day=1
+        )
+
+        end_date = today
+
+        title = (
+            "📅 Расходы за текущий месяц"
+        )
+
+    elif period == "custom":
+
+        await callback.answer()
+
+        await callback.message.answer(
+            "📆 Свой период добавим "
+            "следующим шагом."
+        )
+
+        return
+
+    else:
+
+        await callback.answer(
+            "Неизвестный период."
+        )
+
+        return
+
+    await callback.answer()
+
+    await show_period_expenses(
+        message=callback.message,
+        user_id=callback.from_user.id,
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        title=title,
+    )
+
+
+# =========================================================
 # УДАЛЕНИЕ РАСХОДА
 # =========================================================
 
@@ -298,6 +485,7 @@ async def delete_expense_menu(
             "Удалять пока нечего.",
             reply_markup=main_keyboard,
         )
+
         return
 
     buttons = []
@@ -373,6 +561,7 @@ async def edit_expense_menu(
             "Редактировать пока нечего.",
             reply_markup=main_keyboard,
         )
+
         return
 
     buttons = []
@@ -402,7 +591,7 @@ async def edit_expense_menu(
 
 
 # =========================================================
-# ВЫБОР: СУММА ИЛИ КАТЕГОРИЯ
+# ЧТО РЕДАКТИРОВАТЬ
 # =========================================================
 
 @dp.callback_query(
@@ -494,6 +683,7 @@ async def process_edit_amount(
             "❌ Отправь сумму текстом.\n"
             "Например: 850"
         )
+
         return
 
     try:
@@ -506,12 +696,14 @@ async def process_edit_amount(
             "❌ Некорректная сумма.\n"
             "Например: 850"
         )
+
         return
 
     if new_amount <= 0:
         await message.answer(
             "❌ Сумма должна быть больше нуля."
         )
+
         return
 
     data = await state.get_data()
@@ -582,6 +774,7 @@ async def process_edit_category(
         await message.answer(
             "❌ Отправь категорию текстом."
         )
+
         return
 
     new_category = normalize_category(
@@ -610,178 +803,11 @@ async def process_edit_category(
 
 
 # =========================================================
-# РАСХОДЫ ЗА СЕГОДНЯ
-# =========================================================
-
-async def show_today_expenses(
-    message: Message
-):
-    expenses = get_today_expenses(
-        message.from_user.id
-    )
-
-    if not expenses:
-        await message.answer(
-            "Сегодня расходов пока нет.",
-            reply_markup=main_keyboard,
-        )
-        return
-
-    total = sum(
-        expense[0]
-        for expense in expenses
-    )
-
-    categories_total = {}
-
-    for (
-        amount,
-        category,
-        created_at,
-    ) in expenses:
-
-        if category in categories_total:
-            categories_total[category] += amount
-
-        else:
-            categories_total[category] = amount
-
-    text = "📊 Расходы за сегодня:\n\n"
-
-    for (
-        category,
-        amount,
-    ) in categories_total.items():
-
-        text += (
-            f"{category}: "
-            f"{amount:.2f} ₽\n"
-        )
-
-    text += (
-        f"\n💰 Итого: "
-        f"{total:.2f} ₽"
-    )
-
-    await message.answer(
-        text,
-        reply_markup=main_keyboard,
-    )
-
-
-# =========================================================
-# РАСХОДЫ ЗА МЕСЯЦ
-# =========================================================
-
-async def show_month_expenses(
-    message: Message
-):
-    expenses = get_month_expenses(
-        message.from_user.id
-    )
-
-    if not expenses:
-        await message.answer(
-            "В этом месяце расходов пока нет.",
-            reply_markup=main_keyboard,
-        )
-        return
-
-    total = sum(
-        expense[0]
-        for expense in expenses
-    )
-
-    categories_total = {}
-
-    for (
-        amount,
-        category,
-        created_at,
-    ) in expenses:
-
-        if category in categories_total:
-            categories_total[category] += amount
-
-        else:
-            categories_total[category] = amount
-
-    text = (
-        "📅 Расходы за текущий месяц:\n\n"
-    )
-
-    for (
-        category,
-        amount,
-    ) in categories_total.items():
-
-        text += (
-            f"{category}: "
-            f"{amount:.2f} ₽\n"
-        )
-
-    text += (
-        f"\n💰 Итого: "
-        f"{total:.2f} ₽"
-    )
-
-    await message.answer(
-        text,
-        reply_markup=main_keyboard,
-    )
-
-
-# =========================================================
-# КОМАНДЫ СЕГОДНЯ / МЕСЯЦ
-# =========================================================
-
-@dp.message(Command("today"))
-async def today_handler(
-    message: Message
-):
-    await show_today_expenses(
-        message
-    )
-
-
-@dp.message(
-    lambda message:
-    message.text == "📊 Сегодня"
-)
-async def today_button_handler(
-    message: Message
-):
-    await show_today_expenses(
-        message
-    )
-
-
-@dp.message(Command("month"))
-async def month_handler(
-    message: Message
-):
-    await show_month_expenses(
-        message
-    )
-
-
-@dp.message(
-    lambda message:
-    message.text == "📅 Месяц"
-)
-async def month_button_handler(
-    message: Message
-):
-    await show_month_expenses(
-        message
-    )
-
-
-# =========================================================
 # ЗАПУСК БОТА
 # =========================================================
 
 async def main():
+
     if not TOKEN:
         raise RuntimeError(
             "BOT_TOKEN не найден в .env"

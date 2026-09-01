@@ -177,3 +177,32 @@ def update_expense_category(expense_id: int, user_id: int, new_category: str):
 
     conn.commit()
     conn.close()
+
+def get_expenses_by_period(
+    user_id: int,
+    start_date: str,
+    end_date: str,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT amount, category, created_at
+        FROM expenses
+        WHERE user_id = ?
+        AND DATE(created_at) BETWEEN ? AND ?
+        ORDER BY created_at DESC
+        """,
+        (
+            user_id,
+            start_date,
+            end_date,
+        )
+    )
+
+    expenses = cursor.fetchall()
+
+    conn.close()
+
+    return expenses
