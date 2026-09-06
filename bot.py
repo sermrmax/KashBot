@@ -84,7 +84,10 @@ main_keyboard = ReplyKeyboardMarkup(
             KeyboardButton(text="📆 Период"),
         ],
         [
+            KeyboardButton(text="📊 Статистика"),
             KeyboardButton(text="🎯 Лимиты"),
+        ],
+        [
             KeyboardButton(text="🔁 Регулярные"),
         ],
         [
@@ -136,6 +139,19 @@ def prepare_category(category: str):
         return button_categories[category]
 
     return normalize_category(category)
+
+
+def get_category_emoji(category: str):
+    emojis = {
+        "Еда": "🍔",
+        "Транспорт": "🚕",
+        "Табак": "🚬",
+        "Развлечения": "🎮",
+        "Покупки": "🛒",
+        "Другое": "✍️",
+    }
+
+    return emojis.get(category, "•")
 
 
 # =========================================================
@@ -290,7 +306,10 @@ async def process_category(
         f"🏷️ Категория: {category}"
     )
 
-    # Проверяем лимит
+    # =====================================================
+    # ПРОВЕРКА ЛИМИТА
+    # =====================================================
+
     limit = get_category_limit(
         user_id=user_id,
         category=category,
@@ -298,7 +317,6 @@ async def process_category(
 
     if limit is not None:
         today = datetime.now().date()
-
         start_date = today.replace(day=1)
 
         expenses = get_expenses_by_period(
@@ -397,12 +415,6 @@ async def period_menu(message: Message):
                     callback_data="period:month",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="Свой период",
-                    callback_data="period:custom",
-                )
-            ],
         ]
     )
 
@@ -449,8 +461,11 @@ async def show_period_expenses(
     text = f"{title}\n\n"
 
     for category, amount in categories_total.items():
+        emoji = get_category_emoji(category)
+
         text += (
-            f"{category}: {amount:.2f} ₽\n"
+            f"{emoji} {category}: "
+            f"{amount:.2f} ₽\n"
         )
 
     text += (
@@ -496,15 +511,6 @@ async def period_callback(
             "📅 Расходы за текущий месяц"
         )
 
-    elif period == "custom":
-        await callback.answer()
-
-        await callback.message.answer(
-            "📆 Свой период пока добавим "
-            "следующим шагом."
-        )
-        return
-
     else:
         await callback.answer(
             "Неизвестный период."
@@ -519,6 +525,175 @@ async def period_callback(
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
         title=title,
+    )
+
+
+# =========================================================
+# 📊 СТАТИСТИКА
+# =========================================================
+
+@dp.message(
+    lambda message:
+    message.text == "📊 Статистика"
+)
+async def statistics_handler(
+    message: Message,
+):
+    user_id = message.from_user.id
+
+    today = datetime.now().date()
+
+    start_date = today.replace(
+        day=1
+    )
+
+    expenses = get_expenses_by_period(
+        user_id=user_id,
+        start_date=start_date.isoformat(),
+        end_date=today.isoformat(),
+    )
+
+    if not expenses:
+        await message.answer(
+            "📊 Статистика\n\n"
+            "В этом месяце расходов пока нет.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    # =====================================================
+    # ОБЩАЯ СУММА
+    # =====================================================
+
+    total = sum(
+        amount
+        for amount, category, created_at
+        in expenses
+    )
+
+    # =====================================================
+    # КОЛИЧЕСТВО ОПЕРАЦИЙ
+    # =====================================================
+
+    operations_count = len(expenses)
+
+    # =====================================================
+    # СРЕДНИЙ РАСХОД
+    # =====================================================
+
+    average_expense = (
+        total / operations_count
+        if operations_count > 0
+        else 0
+    )
+
+    # =====================================================
+    # СРЕДНИЕ ТРАТЫ В ДЕНЬ
+    # =====================================================
+
+    days_passed = today.day
+
+    average_per_day = (
+        total / days_passed
+        if days_passed > 0
+        else 0
+    )
+
+    # =====================================================
+    # РАСХОДЫ ПО КАТЕГОРИЯМ
+    # =====================================================
+
+    categories_total = {}
+
+    for amount, category, created_at in expenses:
+        categories_total[category] = (
+            categories_total.get(category, 0)
+            + amount
+        )
+
+    sorted_categories = sorted(
+        categories_total.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    # =====================================================
+    # САМАЯ ДОРОГАЯ КАТЕГОРИЯ
+    # =====================================================
+
+    top_category = sorted_categories[0]
+
+    top_category_name = top_category[0]
+    top_category_amount = top_category[1]
+
+    # =====================================================
+    # НАЗВАНИЕ МЕСЯЦА
+    # =====================================================
+
+    months = {
+        1: "Январь",
+        2: "Февраль",
+        3: "Март",
+        4: "Апрель",
+        5: "Май",
+        6: "Июнь",
+        7: "Июль",
+        8: "Август",
+        9: "Сентябрь",
+        10: "Октябрь",
+        11: "Ноябрь",
+        12: "Декабрь",
+    }
+
+    month_name = months[
+        today.month
+    ]
+
+    # =====================================================
+    # ФОРМИРУЕМ ТЕКСТ
+    # =====================================================
+
+    text = (
+        f"📊 Статистика — {month_name}\n\n"
+        f"💰 Потрачено: {total:.2f} ₽\n"
+        f"🧾 Операций: {operations_count}\n"
+        f"💳 Средний расход: "
+        f"{average_expense:.2f} ₽\n"
+        f"📅 Средние траты в день: "
+        f"{average_per_day:.2f} ₽\n\n"
+        "Категории:\n"
+    )
+
+    for category, amount in sorted_categories:
+        percent = (
+            amount / total * 100
+            if total > 0
+            else 0
+        )
+
+        emoji = get_category_emoji(
+            category
+        )
+
+        text += (
+            f"{emoji} {category} — "
+            f"{amount:.2f} ₽ "
+            f"({percent:.0f}%)\n"
+        )
+
+    top_emoji = get_category_emoji(
+        top_category_name
+    )
+
+    text += (
+        "\n🏆 Больше всего расходов:\n"
+        f"{top_emoji} {top_category_name} — "
+        f"{top_category_amount:.2f} ₽"
+    )
+
+    await message.answer(
+        text,
+        reply_markup=main_keyboard,
     )
 
 
@@ -882,10 +1057,6 @@ async def recurring_menu(
     )
 
 
-# =========================================================
-# ДОБАВЛЕНИЕ РЕГУЛЯРНОГО — НАЗВАНИЕ
-# =========================================================
-
 @dp.callback_query(
     lambda callback:
     callback.data == "recurring:add"
@@ -936,10 +1107,6 @@ async def process_recurring_name(
     )
 
 
-# =========================================================
-# РЕГУЛЯРНЫЙ — СУММА
-# =========================================================
-
 @dp.message(
     AddExpense.waiting_for_recurring_amount
 )
@@ -986,10 +1153,6 @@ async def process_recurring_amount(
     )
 
 
-# =========================================================
-# РЕГУЛЯРНЫЙ — КАТЕГОРИЯ
-# =========================================================
-
 @dp.message(
     AddExpense.waiting_for_recurring_category
 )
@@ -1023,10 +1186,6 @@ async def process_recurring_category(
         reply_markup=ReplyKeyboardRemove(),
     )
 
-
-# =========================================================
-# РЕГУЛЯРНЫЙ — ДЕНЬ МЕСЯЦА
-# =========================================================
 
 @dp.message(
     AddExpense.waiting_for_recurring_day
@@ -1085,10 +1244,6 @@ async def process_recurring_day(
     )
 
 
-# =========================================================
-# СПИСОК РЕГУЛЯРНЫХ
-# =========================================================
-
 @dp.callback_query(
     lambda callback:
     callback.data == "recurring:list"
@@ -1141,10 +1296,6 @@ async def recurring_list_callback(
         reply_markup=main_keyboard,
     )
 
-
-# =========================================================
-# ВЫБОР РЕГУЛЯРНОГО ДЛЯ ОПЛАТЫ
-# =========================================================
 
 @dp.callback_query(
     lambda callback:
@@ -1199,10 +1350,6 @@ async def recurring_pay_menu(
     )
 
 
-# =========================================================
-# ПОДТВЕРЖДЕНИЕ ОПЛАТЫ
-# =========================================================
-
 @dp.callback_query(
     lambda callback:
     callback.data
@@ -1254,10 +1401,6 @@ async def recurring_pay_callback(
         "Расход добавлен в общую статистику."
     )
 
-
-# =========================================================
-# ВЫБОР РЕГУЛЯРНОГО ДЛЯ УДАЛЕНИЯ
-# =========================================================
 
 @dp.callback_query(
     lambda callback:
@@ -1312,10 +1455,6 @@ async def recurring_delete_menu(
         reply_markup=keyboard,
     )
 
-
-# =========================================================
-# УДАЛЕНИЕ РЕГУЛЯРНОГО
-# =========================================================
 
 @dp.callback_query(
     lambda callback:
