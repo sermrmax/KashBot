@@ -37,6 +37,9 @@ from database import (
     get_recurring_expenses,
     get_recurring_expense,
     delete_recurring_expense,
+    set_monthly_budget,
+    get_monthly_budget,
+    delete_monthly_budget,
 )
 
 from categories import normalize_category
@@ -72,6 +75,8 @@ class AddExpense(StatesGroup):
     waiting_for_recurring_category = State()
     waiting_for_recurring_day = State()
 
+    waiting_for_budget_amount = State()
+
 
 # =========================================================
 # ГЛАВНОЕ МЕНЮ
@@ -85,9 +90,10 @@ main_keyboard = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="📊 Статистика"),
-            KeyboardButton(text="🎯 Лимиты"),
+            KeyboardButton(text="💼 Бюджет"),
         ],
         [
+            KeyboardButton(text="🎯 Лимиты"),
             KeyboardButton(text="🔁 Регулярные"),
         ],
         [
@@ -152,6 +158,19 @@ def get_category_emoji(category: str):
     }
 
     return emojis.get(category, "•")
+
+
+def get_budget_indicator(percent: float):
+    if percent < 60:
+        return "🟢"
+
+    elif percent < 80:
+        return "🟡"
+
+    elif percent <= 100:
+        return "🟠"
+
+    return "🔴"
 
 
 # =========================================================
@@ -307,7 +326,7 @@ async def process_category(
     )
 
     # =====================================================
-    # ПРОВЕРКА ЛИМИТА
+    # ПРОВЕРКА ЛИМИТА КАТЕГОРИИ
     # =====================================================
 
     limit = get_category_limit(
@@ -315,16 +334,16 @@ async def process_category(
         category=category,
     )
 
+    today = datetime.now().date()
+    start_date = today.replace(day=1)
+
+    expenses = get_expenses_by_period(
+        user_id=user_id,
+        start_date=start_date.isoformat(),
+        end_date=today.isoformat(),
+    )
+
     if limit is not None:
-        today = datetime.now().date()
-        start_date = today.replace(day=1)
-
-        expenses = get_expenses_by_period(
-            user_id=user_id,
-            start_date=start_date.isoformat(),
-            end_date=today.isoformat(),
-        )
-
         spent = sum(
             expense_amount
             for (
@@ -378,6 +397,62 @@ async def process_category(
                 f"Превышение: "
                 f"{abs(remaining):.2f} ₽\n"
                 f"Использовано: {percent:.0f}%"
+            )
+
+    # =====================================================
+    # ПРОВЕРКА ОБЩЕГО БЮДЖЕТА
+    # =====================================================
+
+    monthly_budget = get_monthly_budget(
+        user_id=user_id
+    )
+
+    if monthly_budget is not None:
+        total_spent = sum(
+            expense_amount
+            for (
+                expense_amount,
+                expense_category,
+                created_at,
+            ) in expenses
+        )
+
+        remaining_budget = (
+            monthly_budget - total_spent
+        )
+
+        budget_percent = (
+            total_spent / monthly_budget * 100
+            if monthly_budget > 0
+            else 0
+        )
+
+        indicator = get_budget_indicator(
+            budget_percent
+        )
+
+        text += (
+            "\n\n"
+            f"{indicator} Общий бюджет:\n"
+            f"{total_spent:.2f} / "
+            f"{monthly_budget:.2f} ₽\n"
+        )
+
+        if remaining_budget >= 0:
+            text += (
+                f"Осталось: "
+                f"{remaining_budget:.2f} ₽\n"
+                f"Использовано: "
+                f"{budget_percent:.0f}%"
+            )
+
+        else:
+            text += (
+                "⚠️ Бюджет превышен!\n"
+                f"Превышение: "
+                f"{abs(remaining_budget):.2f} ₽\n"
+                f"Использовано: "
+                f"{budget_percent:.0f}%"
             )
 
     await message.answer(
@@ -561,35 +636,19 @@ async def statistics_handler(
         )
         return
 
-    # =====================================================
-    # ОБЩАЯ СУММА
-    # =====================================================
-
     total = sum(
         amount
         for amount, category, created_at
         in expenses
     )
 
-    # =====================================================
-    # КОЛИЧЕСТВО ОПЕРАЦИЙ
-    # =====================================================
-
     operations_count = len(expenses)
-
-    # =====================================================
-    # СРЕДНИЙ РАСХОД
-    # =====================================================
 
     average_expense = (
         total / operations_count
         if operations_count > 0
         else 0
     )
-
-    # =====================================================
-    # СРЕДНИЕ ТРАТЫ В ДЕНЬ
-    # =====================================================
 
     days_passed = today.day
 
@@ -598,10 +657,6 @@ async def statistics_handler(
         if days_passed > 0
         else 0
     )
-
-    # =====================================================
-    # РАСХОДЫ ПО КАТЕГОРИЯМ
-    # =====================================================
 
     categories_total = {}
 
@@ -617,18 +672,10 @@ async def statistics_handler(
         reverse=True,
     )
 
-    # =====================================================
-    # САМАЯ ДОРОГАЯ КАТЕГОРИЯ
-    # =====================================================
-
     top_category = sorted_categories[0]
 
     top_category_name = top_category[0]
     top_category_amount = top_category[1]
-
-    # =====================================================
-    # НАЗВАНИЕ МЕСЯЦА
-    # =====================================================
 
     months = {
         1: "Январь",
@@ -648,10 +695,6 @@ async def statistics_handler(
     month_name = months[
         today.month
     ]
-
-    # =====================================================
-    # ФОРМИРУЕМ ТЕКСТ
-    # =====================================================
 
     text = (
         f"📊 Статистика — {month_name}\n\n"
@@ -694,6 +737,241 @@ async def statistics_handler(
     await message.answer(
         text,
         reply_markup=main_keyboard,
+    )
+
+
+# =========================================================
+# 💼 ОБЩИЙ МЕСЯЧНЫЙ БЮДЖЕТ
+# =========================================================
+
+@dp.message(
+    lambda message:
+    message.text == "💼 Бюджет"
+)
+async def budget_menu(
+    message: Message,
+):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➕ Установить / изменить",
+                    callback_data="budget:set",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Посмотреть бюджет",
+                    callback_data="budget:show",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить бюджет",
+                    callback_data="budget:delete",
+                )
+            ],
+        ]
+    )
+
+    await message.answer(
+        "💼 Общий месячный бюджет\n\n"
+        "Здесь можно установить общий "
+        "лимит расходов на месяц.",
+        reply_markup=keyboard,
+    )
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data == "budget:set"
+)
+async def budget_set_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+    await state.set_state(
+        AddExpense.waiting_for_budget_amount
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        "💼 Какой бюджет установить "
+        "на месяц?\n\n"
+        "Например: 100000"
+    )
+
+
+@dp.message(
+    AddExpense.waiting_for_budget_amount
+)
+async def process_budget_amount(
+    message: Message,
+    state: FSMContext,
+):
+    if not message.text:
+        await message.answer(
+            "❌ Отправь сумму."
+        )
+        return
+
+    try:
+        amount = float(
+            message.text.replace(",", ".")
+        )
+
+    except ValueError:
+        await message.answer(
+            "❌ Некорректная сумма.\n"
+            "Например: 100000"
+        )
+        return
+
+    if amount <= 0:
+        await message.answer(
+            "❌ Бюджет должен быть больше нуля."
+        )
+        return
+
+    set_monthly_budget(
+        user_id=message.from_user.id,
+        amount=amount,
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ Месячный бюджет установлен!\n\n"
+        f"💼 Бюджет: {amount:.2f} ₽",
+        reply_markup=main_keyboard,
+    )
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data == "budget:show"
+)
+async def budget_show_callback(
+    callback: CallbackQuery,
+):
+    user_id = callback.from_user.id
+
+    budget = get_monthly_budget(
+        user_id=user_id
+    )
+
+    await callback.answer()
+
+    if budget is None:
+        await callback.message.answer(
+            "💼 Месячный бюджет пока "
+            "не установлен.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    today = datetime.now().date()
+    start_date = today.replace(day=1)
+
+    expenses = get_expenses_by_period(
+        user_id=user_id,
+        start_date=start_date.isoformat(),
+        end_date=today.isoformat(),
+    )
+
+    spent = sum(
+        amount
+        for amount, category, created_at
+        in expenses
+    )
+
+    remaining = budget - spent
+
+    percent = (
+        spent / budget * 100
+        if budget > 0
+        else 0
+    )
+
+    indicator = get_budget_indicator(
+        percent
+    )
+
+    months = {
+        1: "Январь",
+        2: "Февраль",
+        3: "Март",
+        4: "Апрель",
+        5: "Май",
+        6: "Июнь",
+        7: "Июль",
+        8: "Август",
+        9: "Сентябрь",
+        10: "Октябрь",
+        11: "Ноябрь",
+        12: "Декабрь",
+    }
+
+    month_name = months[
+        today.month
+    ]
+
+    text = (
+        f"💼 Бюджет — {month_name}\n\n"
+        f"Бюджет: {budget:.2f} ₽\n"
+        f"Потрачено: {spent:.2f} ₽\n"
+    )
+
+    if remaining >= 0:
+        text += (
+            f"Осталось: {remaining:.2f} ₽\n"
+            f"Использовано: {percent:.0f}%\n\n"
+            f"{indicator} Бюджет пока "
+            "не превышен."
+        )
+
+    else:
+        text += (
+            f"Превышение: "
+            f"{abs(remaining):.2f} ₽\n"
+            f"Использовано: "
+            f"{percent:.0f}%\n\n"
+            "🔴 Бюджет превышен!"
+        )
+
+    await callback.message.answer(
+        text,
+        reply_markup=main_keyboard,
+    )
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data == "budget:delete"
+)
+async def budget_delete_callback(
+    callback: CallbackQuery,
+):
+    budget = get_monthly_budget(
+        user_id=callback.from_user.id
+    )
+
+    await callback.answer()
+
+    if budget is None:
+        await callback.message.answer(
+            "💼 Бюджет пока не установлен.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    delete_monthly_budget(
+        user_id=callback.from_user.id
+    )
+
+    await callback.message.edit_text(
+        "✅ Месячный бюджет удалён."
     )
 
 
@@ -1010,7 +1288,7 @@ async def delete_limit_callback(
 
 
 # =========================================================
-# 🔁 РЕГУЛЯРНЫЕ РАСХОДЫ — МЕНЮ
+# 🔁 РЕГУЛЯРНЫЕ РАСХОДЫ
 # =========================================================
 
 @dp.message(
