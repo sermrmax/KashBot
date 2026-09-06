@@ -1,22 +1,39 @@
 import sqlite3
-
 from datetime import datetime
 
 
+# =========================================================
+# 1. НАСТРОЙКИ БАЗЫ ДАННЫХ
+# =========================================================
+
+# SQLite хранит всю базу в одном локальном файле.
 DB_NAME = "expenses.db"
 
 
 # =========================================================
-# ИНИЦИАЛИЗАЦИЯ БАЗЫ
+# 2. ИНИЦИАЛИЗАЦИЯ БАЗЫ
 # =========================================================
 
 def init_db():
+    """
+    Создаёт необходимые таблицы, если их ещё нет.
+
+    Эта функция вызывается при запуске бота.
+    Уже существующие таблицы и данные не удаляются.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     # -----------------------------------------------------
-    # ОБЫЧНЫЕ РАСХОДЫ
+    # Обычные расходы
     # -----------------------------------------------------
+    #
+    # Здесь хранятся все разовые расходы пользователя.
+    #
+    # Пример:
+    # 500 ₽ / Еда / 2026-09-07
+    #
 
     cursor.execute(
         """
@@ -31,8 +48,18 @@ def init_db():
     )
 
     # -----------------------------------------------------
-    # ЛИМИТЫ ПО КАТЕГОРИЯМ
+    # Лимиты по категориям
     # -----------------------------------------------------
+    #
+    # Хранит месячный лимит для каждой категории.
+    #
+    # Например:
+    # Еда -> 20000 ₽
+    # Транспорт -> 10000 ₽
+    #
+    # UNIQUE(user_id, category) не позволяет создать
+    # два разных лимита для одной категории пользователя.
+    #
 
     cursor.execute(
         """
@@ -47,8 +74,18 @@ def init_db():
     )
 
     # -----------------------------------------------------
-    # РЕГУЛЯРНЫЕ РАСХОДЫ
+    # Регулярные расходы
     # -----------------------------------------------------
+    #
+    # Здесь находятся постоянные ежемесячные платежи.
+    #
+    # Например:
+    # Интернет / 900 ₽ / Покупки / 10 число
+    #
+    # is_active оставлен на будущее:
+    # 1 = активен
+    # 0 = отключён
+    #
 
     cursor.execute(
         """
@@ -65,8 +102,19 @@ def init_db():
     )
 
     # -----------------------------------------------------
-    # ОБЩИЙ МЕСЯЧНЫЙ БЮДЖЕТ
+    # Общий месячный бюджет
     # -----------------------------------------------------
+    #
+    # Для каждого пользователя хранится один текущий
+    # месячный бюджет.
+    #
+    # Например:
+    # user_id = 123
+    # amount = 100000
+    #
+    # UNIQUE(user_id) означает:
+    # один пользователь -> один бюджет.
+    #
 
     cursor.execute(
         """
@@ -83,14 +131,24 @@ def init_db():
 
 
 # =========================================================
-# ОБЫЧНЫЕ РАСХОДЫ
+# 3. ОБЫЧНЫЕ РАСХОДЫ
 # =========================================================
+
 
 def add_expense(
     user_id: int,
     amount: float,
     category: str,
-):
+) -> int:
+    """
+    Добавляет новый обычный расход.
+
+    Возвращает ID созданной записи.
+
+    Этот ID нужен, например, для кнопки:
+    ↩️ Отменить
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -112,6 +170,7 @@ def add_expense(
         )
     )
 
+    # SQLite автоматически присваивает новый ID.
     expense_id = cursor.lastrowid
 
     conn.commit()
@@ -125,6 +184,19 @@ def get_expenses_by_period(
     start_date: str,
     end_date: str,
 ):
+    """
+    Возвращает расходы пользователя
+    за выбранный период.
+
+    start_date и end_date передаются в формате:
+
+    YYYY-MM-DD
+
+    Например:
+    2026-09-01
+    2026-09-07
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -157,6 +229,16 @@ def get_recent_expenses(
     user_id: int,
     limit: int = 10,
 ):
+    """
+    Возвращает последние расходы пользователя.
+
+    По умолчанию возвращается 10 записей.
+
+    Используется для:
+    - удаления расхода
+    - редактирования расхода
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -189,6 +271,16 @@ def delete_expense(
     expense_id: int,
     user_id: int,
 ):
+    """
+    Удаляет конкретный расход.
+
+    Проверяется не только ID расхода,
+    но и user_id.
+
+    Благодаря этому пользователь
+    не сможет удалить чужую запись.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -213,6 +305,10 @@ def update_expense_amount(
     user_id: int,
     new_amount: float,
 ):
+    """
+    Изменяет сумму обычного расхода.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -239,6 +335,10 @@ def update_expense_category(
     user_id: int,
     new_category: str,
 ):
+    """
+    Изменяет категорию обычного расхода.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -261,14 +361,25 @@ def update_expense_category(
 
 
 # =========================================================
-# ЛИМИТЫ ПО КАТЕГОРИЯМ
+# 4. ЛИМИТЫ ПО КАТЕГОРИЯМ
 # =========================================================
+
 
 def set_category_limit(
     user_id: int,
     category: str,
     amount: float,
 ):
+    """
+    Создаёт или обновляет лимит категории.
+
+    Если лимита для такой категории ещё нет:
+    -> создаётся новая запись.
+
+    Если уже есть:
+    -> сумма обновляется.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -299,6 +410,12 @@ def set_category_limit(
 def get_category_limits(
     user_id: int,
 ):
+    """
+    Возвращает все лимиты пользователя.
+
+    Сортировка идёт по названию категории.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -325,7 +442,17 @@ def get_category_limits(
 def get_category_limit(
     user_id: int,
     category: str,
-):
+) -> float | None:
+    """
+    Возвращает лимит конкретной категории.
+
+    Если лимит существует:
+    -> возвращает сумму.
+
+    Если лимита нет:
+    -> возвращает None.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -356,6 +483,10 @@ def delete_category_limit(
     user_id: int,
     limit_id: int,
 ):
+    """
+    Удаляет конкретный лимит пользователя.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -376,8 +507,9 @@ def delete_category_limit(
 
 
 # =========================================================
-# РЕГУЛЯРНЫЕ РАСХОДЫ
+# 5. РЕГУЛЯРНЫЕ РАСХОДЫ
 # =========================================================
+
 
 def add_recurring_expense(
     user_id: int,
@@ -386,6 +518,16 @@ def add_recurring_expense(
     category: str,
     day_of_month: int,
 ):
+    """
+    Добавляет новый регулярный расход.
+
+    Например:
+    Интернет
+    900 ₽
+    Покупки
+    10 числа
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -416,6 +558,14 @@ def add_recurring_expense(
 def get_recurring_expenses(
     user_id: int,
 ):
+    """
+    Возвращает все активные
+    регулярные расходы пользователя.
+
+    Сначала сортируем по дню оплаты,
+    затем по названию.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -446,6 +596,15 @@ def get_recurring_expense(
     recurring_id: int,
     user_id: int,
 ):
+    """
+    Возвращает один конкретный
+    регулярный расход.
+
+    Используется при:
+    - редактировании
+    - отметке как оплаченного
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -479,6 +638,10 @@ def delete_recurring_expense(
     recurring_id: int,
     user_id: int,
 ):
+    """
+    Полностью удаляет регулярный расход.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -499,14 +662,19 @@ def delete_recurring_expense(
 
 
 # =========================================================
-# РЕДАКТИРОВАНИЕ РЕГУЛЯРНЫХ РАСХОДОВ
+# 6. РЕДАКТИРОВАНИЕ РЕГУЛЯРНЫХ РАСХОДОВ
 # =========================================================
+
 
 def update_recurring_name(
     recurring_id: int,
     user_id: int,
     new_name: str,
 ):
+    """
+    Изменяет название регулярного расхода.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -533,6 +701,10 @@ def update_recurring_amount(
     user_id: int,
     new_amount: float,
 ):
+    """
+    Изменяет сумму регулярного расхода.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -559,6 +731,10 @@ def update_recurring_category(
     user_id: int,
     new_category: str,
 ):
+    """
+    Изменяет категорию регулярного расхода.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -585,6 +761,14 @@ def update_recurring_day(
     user_id: int,
     new_day: int,
 ):
+    """
+    Изменяет день ежемесячной оплаты.
+
+    Например:
+    было 10 число
+    стало 15 число.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -607,13 +791,21 @@ def update_recurring_day(
 
 
 # =========================================================
-# ОБЩИЙ МЕСЯЧНЫЙ БЮДЖЕТ
+# 7. ОБЩИЙ МЕСЯЧНЫЙ БЮДЖЕТ
 # =========================================================
+
 
 def set_monthly_budget(
     user_id: int,
     amount: float,
 ):
+    """
+    Создаёт или изменяет общий месячный бюджет.
+
+    У пользователя может быть
+    только один текущий бюджет.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -641,7 +833,17 @@ def set_monthly_budget(
 
 def get_monthly_budget(
     user_id: int,
-):
+) -> float | None:
+    """
+    Возвращает текущий месячный бюджет.
+
+    Если бюджет установлен:
+    -> возвращает сумму.
+
+    Если нет:
+    -> возвращает None.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -667,6 +869,10 @@ def get_monthly_budget(
 def delete_monthly_budget(
     user_id: int,
 ):
+    """
+    Удаляет установленный месячный бюджет.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
