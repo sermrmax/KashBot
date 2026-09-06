@@ -182,6 +182,19 @@ def get_budget_indicator(percent: float):
     return "🔴"
 
 
+def get_undo_keyboard(expense_id: int):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="↩️ Отменить",
+                    callback_data=f"undo_expense:{expense_id}",
+                )
+            ]
+        ]
+    )
+
+
 # =========================================================
 # TELEGRAM SESSION
 # =========================================================
@@ -320,7 +333,7 @@ async def process_category(
     amount = data["amount"]
     user_id = message.from_user.id
 
-    add_expense(
+    expense_id = add_expense(
         user_id=user_id,
         amount=amount,
         category=category,
@@ -458,7 +471,47 @@ async def process_category(
 
     await message.answer(
         text,
+        reply_markup=get_undo_keyboard(
+            expense_id
+        ),
+    )
+
+    await message.answer(
+        "Выбери следующее действие 👇",
         reply_markup=main_keyboard,
+    )
+
+
+# =========================================================
+# ОТМЕНА ДОБАВЛЕННОГО РАСХОДА
+# =========================================================
+
+@dp.callback_query(
+    lambda callback:
+    callback.data
+    and callback.data.startswith(
+        "undo_expense:"
+    )
+)
+async def undo_expense_callback(
+    callback: CallbackQuery,
+):
+    expense_id = int(
+        callback.data.split(":")[1]
+    )
+
+    delete_expense(
+        expense_id=expense_id,
+        user_id=callback.from_user.id,
+    )
+
+    await callback.answer(
+        "Расход отменён ↩️"
+    )
+
+    await callback.message.edit_text(
+        "↩️ Расход отменён.\n\n"
+        "Запись удалена из расходов."
     )
 
 
@@ -1655,7 +1708,7 @@ async def recurring_pay_callback(
         day,
     ) = expense
 
-    add_expense(
+    expense_id = add_expense(
         user_id=callback.from_user.id,
         amount=amount,
         category=category,
@@ -1670,7 +1723,10 @@ async def recurring_pay_callback(
         f"🔁 {name}\n"
         f"💰 {amount:.2f} ₽\n"
         f"🏷 {category}\n\n"
-        "Расход добавлен в общую статистику."
+        "Расход добавлен в общую статистику.",
+        reply_markup=get_undo_keyboard(
+            expense_id
+        ),
     )
 
 

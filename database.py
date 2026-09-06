@@ -112,8 +112,12 @@ def add_expense(
         )
     )
 
+    expense_id = cursor.lastrowid
+
     conn.commit()
     conn.close()
+
+    return expense_id
 
 
 def get_expenses_by_period(
