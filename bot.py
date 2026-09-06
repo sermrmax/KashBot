@@ -37,6 +37,10 @@ from database import (
     get_recurring_expenses,
     get_recurring_expense,
     delete_recurring_expense,
+    update_recurring_name,
+    update_recurring_amount,
+    update_recurring_category,
+    update_recurring_day,
     set_monthly_budget,
     get_monthly_budget,
     delete_monthly_budget,
@@ -74,6 +78,11 @@ class AddExpense(StatesGroup):
     waiting_for_recurring_amount = State()
     waiting_for_recurring_category = State()
     waiting_for_recurring_day = State()
+
+    waiting_for_recurring_edit_name = State()
+    waiting_for_recurring_edit_amount = State()
+    waiting_for_recurring_edit_category = State()
+    waiting_for_recurring_edit_day = State()
 
     waiting_for_budget_amount = State()
 
@@ -325,10 +334,6 @@ async def process_category(
         f"🏷️ Категория: {category}"
     )
 
-    # =====================================================
-    # ПРОВЕРКА ЛИМИТА КАТЕГОРИИ
-    # =====================================================
-
     limit = get_category_limit(
         user_id=user_id,
         category=category,
@@ -398,10 +403,6 @@ async def process_category(
                 f"{abs(remaining):.2f} ₽\n"
                 f"Использовано: {percent:.0f}%"
             )
-
-    # =====================================================
-    # ПРОВЕРКА ОБЩЕГО БЮДЖЕТА
-    # =====================================================
 
     monthly_budget = get_monthly_budget(
         user_id=user_id
@@ -573,18 +574,12 @@ async def period_callback(
     elif period == "week":
         start_date = today - timedelta(days=6)
         end_date = today
-
-        title = (
-            "📆 Расходы за последние 7 дней"
-        )
+        title = "📆 Расходы за последние 7 дней"
 
     elif period == "month":
         start_date = today.replace(day=1)
         end_date = today
-
-        title = (
-            "📅 Расходы за текущий месяц"
-        )
+        title = "📅 Расходы за текущий месяц"
 
     else:
         await callback.answer(
@@ -604,7 +599,7 @@ async def period_callback(
 
 
 # =========================================================
-# 📊 СТАТИСТИКА
+# СТАТИСТИКА
 # =========================================================
 
 @dp.message(
@@ -617,10 +612,7 @@ async def statistics_handler(
     user_id = message.from_user.id
 
     today = datetime.now().date()
-
-    start_date = today.replace(
-        day=1
-    )
+    start_date = today.replace(day=1)
 
     expenses = get_expenses_by_period(
         user_id=user_id,
@@ -672,10 +664,8 @@ async def statistics_handler(
         reverse=True,
     )
 
-    top_category = sorted_categories[0]
-
-    top_category_name = top_category[0]
-    top_category_amount = top_category[1]
+    top_category_name = sorted_categories[0][0]
+    top_category_amount = sorted_categories[0][1]
 
     months = {
         1: "Январь",
@@ -692,9 +682,7 @@ async def statistics_handler(
         12: "Декабрь",
     }
 
-    month_name = months[
-        today.month
-    ]
+    month_name = months[today.month]
 
     text = (
         f"📊 Статистика — {month_name}\n\n"
@@ -741,7 +729,7 @@ async def statistics_handler(
 
 
 # =========================================================
-# 💼 ОБЩИЙ МЕСЯЧНЫЙ БЮДЖЕТ
+# БЮДЖЕТ
 # =========================================================
 
 @dp.message(
@@ -976,7 +964,7 @@ async def budget_delete_callback(
 
 
 # =========================================================
-# ЛИМИТЫ — МЕНЮ
+# ЛИМИТЫ
 # =========================================================
 
 @dp.message(
@@ -1288,7 +1276,7 @@ async def delete_limit_callback(
 
 
 # =========================================================
-# 🔁 РЕГУЛЯРНЫЕ РАСХОДЫ
+# РЕГУЛЯРНЫЕ РАСХОДЫ
 # =========================================================
 
 @dp.message(
@@ -1316,6 +1304,12 @@ async def recurring_menu(
                 InlineKeyboardButton(
                     text="✅ Отметить оплаченным",
                     callback_data="recurring:pay_menu",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Редактировать",
+                    callback_data="recurring:edit_menu",
                 )
             ],
             [
@@ -1679,6 +1673,433 @@ async def recurring_pay_callback(
         "Расход добавлен в общую статистику."
     )
 
+
+# =========================================================
+# РЕДАКТИРОВАНИЕ РЕГУЛЯРНЫХ
+# =========================================================
+
+@dp.callback_query(
+    lambda callback:
+    callback.data == "recurring:edit_menu"
+)
+async def recurring_edit_menu(
+    callback: CallbackQuery,
+):
+    expenses = get_recurring_expenses(
+        callback.from_user.id
+    )
+
+    await callback.answer()
+
+    if not expenses:
+        await callback.message.answer(
+            "Редактировать пока нечего."
+        )
+        return
+
+    buttons = []
+
+    for (
+        recurring_id,
+        name,
+        amount,
+        category,
+        day,
+    ) in expenses:
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=(
+                        f"✏️ {name} — "
+                        f"{amount:.2f} ₽"
+                    ),
+                    callback_data=(
+                        f"recurring_edit:{recurring_id}"
+                    ),
+                )
+            ]
+        )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=buttons
+    )
+
+    await callback.message.answer(
+        "✏️ Выбери регулярный расход:",
+        reply_markup=keyboard,
+    )
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data
+    and callback.data.startswith(
+        "recurring_edit:"
+    )
+)
+async def recurring_edit_select(
+    callback: CallbackQuery,
+):
+    recurring_id = int(
+        callback.data.split(":")[1]
+    )
+
+    expense = get_recurring_expense(
+        recurring_id=recurring_id,
+        user_id=callback.from_user.id,
+    )
+
+    if not expense:
+        await callback.answer(
+            "Расход не найден."
+        )
+        return
+
+    (
+        recurring_id,
+        name,
+        amount,
+        category,
+        day,
+    ) = expense
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📝 Название",
+                    callback_data=(
+                        f"rec_edit_name:{recurring_id}"
+                    ),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💰 Сумму",
+                    callback_data=(
+                        f"rec_edit_amount:{recurring_id}"
+                    ),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏷 Категорию",
+                    callback_data=(
+                        f"rec_edit_category:{recurring_id}"
+                    ),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📅 День оплаты",
+                    callback_data=(
+                        f"rec_edit_day:{recurring_id}"
+                    ),
+                )
+            ],
+        ]
+    )
+
+    await callback.message.edit_text(
+        "✏️ Редактирование\n\n"
+        f"🔁 {name}\n"
+        f"💰 {amount:.2f} ₽\n"
+        f"🏷 {category}\n"
+        f"📅 {day} числа\n\n"
+        "Что изменить?",
+        reply_markup=keyboard,
+    )
+
+    await callback.answer()
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data
+    and callback.data.startswith(
+        "rec_edit_name:"
+    )
+)
+async def recurring_edit_name_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+    recurring_id = int(
+        callback.data.split(":")[1]
+    )
+
+    await state.update_data(
+        recurring_edit_id=recurring_id
+    )
+
+    await state.set_state(
+        AddExpense.waiting_for_recurring_edit_name
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        "📝 Введи новое название:"
+    )
+
+
+@dp.message(
+    AddExpense.waiting_for_recurring_edit_name
+)
+async def process_recurring_edit_name(
+    message: Message,
+    state: FSMContext,
+):
+    if not message.text:
+        await message.answer(
+            "❌ Введи название."
+        )
+        return
+
+    data = await state.get_data()
+
+    new_name = message.text.strip()
+
+    update_recurring_name(
+        recurring_id=data["recurring_edit_id"],
+        user_id=message.from_user.id,
+        new_name=new_name,
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ Название изменено!\n\n"
+        f"📝 Новое название: {new_name}",
+        reply_markup=main_keyboard,
+    )
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data
+    and callback.data.startswith(
+        "rec_edit_amount:"
+    )
+)
+async def recurring_edit_amount_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+    recurring_id = int(
+        callback.data.split(":")[1]
+    )
+
+    await state.update_data(
+        recurring_edit_id=recurring_id
+    )
+
+    await state.set_state(
+        AddExpense.waiting_for_recurring_edit_amount
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        "💰 Введи новую сумму:"
+    )
+
+
+@dp.message(
+    AddExpense.waiting_for_recurring_edit_amount
+)
+async def process_recurring_edit_amount(
+    message: Message,
+    state: FSMContext,
+):
+    if not message.text:
+        await message.answer(
+            "❌ Отправь сумму."
+        )
+        return
+
+    try:
+        new_amount = float(
+            message.text.replace(",", ".")
+        )
+
+    except ValueError:
+        await message.answer(
+            "❌ Некорректная сумма."
+        )
+        return
+
+    if new_amount <= 0:
+        await message.answer(
+            "❌ Сумма должна быть больше нуля."
+        )
+        return
+
+    data = await state.get_data()
+
+    update_recurring_amount(
+        recurring_id=data["recurring_edit_id"],
+        user_id=message.from_user.id,
+        new_amount=new_amount,
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ Сумма изменена!\n\n"
+        f"💰 Новая сумма: {new_amount:.2f} ₽",
+        reply_markup=main_keyboard,
+    )
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data
+    and callback.data.startswith(
+        "rec_edit_category:"
+    )
+)
+async def recurring_edit_category_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+    recurring_id = int(
+        callback.data.split(":")[1]
+    )
+
+    await state.update_data(
+        recurring_edit_id=recurring_id
+    )
+
+    await state.set_state(
+        AddExpense.waiting_for_recurring_edit_category
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        "🏷 Выбери новую категорию "
+        "или напиши свою:",
+        reply_markup=category_keyboard,
+    )
+
+
+@dp.message(
+    AddExpense.waiting_for_recurring_edit_category
+)
+async def process_recurring_edit_category(
+    message: Message,
+    state: FSMContext,
+):
+    if not message.text:
+        await message.answer(
+            "❌ Отправь категорию."
+        )
+        return
+
+    new_category = prepare_category(
+        message.text
+    )
+
+    data = await state.get_data()
+
+    update_recurring_category(
+        recurring_id=data["recurring_edit_id"],
+        user_id=message.from_user.id,
+        new_category=new_category,
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ Категория изменена!\n\n"
+        f"🏷 Новая категория: {new_category}",
+        reply_markup=main_keyboard,
+    )
+
+
+@dp.callback_query(
+    lambda callback:
+    callback.data
+    and callback.data.startswith(
+        "rec_edit_day:"
+    )
+)
+async def recurring_edit_day_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+    recurring_id = int(
+        callback.data.split(":")[1]
+    )
+
+    await state.update_data(
+        recurring_edit_id=recurring_id
+    )
+
+    await state.set_state(
+        AddExpense.waiting_for_recurring_edit_day
+    )
+
+    await callback.answer()
+
+    await callback.message.answer(
+        "📅 Введи новый день оплаты "
+        "от 1 до 31:"
+    )
+
+
+@dp.message(
+    AddExpense.waiting_for_recurring_edit_day
+)
+async def process_recurring_edit_day(
+    message: Message,
+    state: FSMContext,
+):
+    if not message.text:
+        await message.answer(
+            "❌ Введи число от 1 до 31."
+        )
+        return
+
+    try:
+        new_day = int(
+            message.text.strip()
+        )
+
+    except ValueError:
+        await message.answer(
+            "❌ Нужно ввести число."
+        )
+        return
+
+    if new_day < 1 or new_day > 31:
+        await message.answer(
+            "❌ День должен быть от 1 до 31."
+        )
+        return
+
+    data = await state.get_data()
+
+    update_recurring_day(
+        recurring_id=data["recurring_edit_id"],
+        user_id=message.from_user.id,
+        new_day=new_day,
+    )
+
+    await state.clear()
+
+    await message.answer(
+        "✅ День оплаты изменён!\n\n"
+        f"📅 Новый день: {new_day} числа",
+        reply_markup=main_keyboard,
+    )
+
+
+# =========================================================
+# УДАЛЕНИЕ РЕГУЛЯРНЫХ
+# =========================================================
 
 @dp.callback_query(
     lambda callback:

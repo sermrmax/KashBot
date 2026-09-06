@@ -495,6 +495,114 @@ def delete_recurring_expense(
 
 
 # =========================================================
+# РЕДАКТИРОВАНИЕ РЕГУЛЯРНЫХ РАСХОДОВ
+# =========================================================
+
+def update_recurring_name(
+    recurring_id: int,
+    user_id: int,
+    new_name: str,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE recurring_expenses
+        SET name = ?
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            new_name,
+            recurring_id,
+            user_id,
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_recurring_amount(
+    recurring_id: int,
+    user_id: int,
+    new_amount: float,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE recurring_expenses
+        SET amount = ?
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            new_amount,
+            recurring_id,
+            user_id,
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_recurring_category(
+    recurring_id: int,
+    user_id: int,
+    new_category: str,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE recurring_expenses
+        SET category = ?
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            new_category,
+            recurring_id,
+            user_id,
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_recurring_day(
+    recurring_id: int,
+    user_id: int,
+    new_day: int,
+):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE recurring_expenses
+        SET day_of_month = ?
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            new_day,
+            recurring_id,
+            user_id,
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
 # ОБЩИЙ МЕСЯЧНЫЙ БЮДЖЕТ
 # =========================================================
 
